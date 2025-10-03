@@ -2,23 +2,22 @@ import SwiftUI
 
 struct ContentView: View {
     var body: some View {
-        VStack(spacing: 20) {
-            Image(systemName: "link.circle.fill")
-                .resizable()
-                .scaledToFit()
-                .frame(width: 100, height: 100)
-                .foregroundColor(.blue)
+        TabView {
+            AgentListView()
+                .tabItem {
+                    Label("Agents", systemImage: "brain.head.profile")
+                }
 
-            Text("Agentchains.ai")
-                .font(.largeTitle)
-                .fontWeight(.bold)
+            DashboardView()
+                .tabItem {
+                    Label("Dashboard", systemImage: "chart.bar.fill")
+                }
 
-            Text("AI Agent Workflow Platform")
-                .font(.subheadline)
-                .foregroundColor(.secondary)
+            SettingsView()
+                .tabItem {
+                    Label("Settings", systemImage: "gear")
+                }
         }
-        .padding()
-        .navigationTitle("Home")
     }
 }
 
