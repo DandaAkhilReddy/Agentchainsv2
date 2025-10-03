@@ -1,0 +1,173 @@
+{
+  "name": "AI Reply Assistant - Screenshot to Smart Reply",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "ai-reply",
+        "responseMode": "responseNode",
+        "options": {
+          "allowedOrigins": "*"
+        }
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook - Receive Screenshot",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [250, 300],
+      "webhookId": "ai-reply-screenshot"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extract image data and tone from webhook payload\nconst items = $input.all();\nconst data = items[0].json;\n\n// Get image (base64 or URL)\nconst imageData = data.image || data.screenshot || data.body?.image;\nconst tone = data.tone || 'Friendly';\nconst platform = data.platform || 'WhatsApp';\nconst language = data.language || 'English';\n\n// Validate image exists\nif (!imageData) {\n  throw new Error('No image provided. Send {\"image\": \"base64_or_url\", \"tone\": \"Friendly\"}');\n}\n\n// Build system prompt based on tone and platform\nconst systemPrompts = {\n  'Professional': `You are a professional communication assistant. Generate 3 formal, polite replies. No emojis. Full sentences.`,\n  'Friendly': `You are a friendly communication assistant. Generate 3 warm, casual replies. 1 emoji max per reply. 1-2 sentences each.`,\n  'Casual': `You are a casual communication assistant. Generate 3 relaxed, informal replies. Emojis okay. Keep it short and sweet.`,\n  'Flirty': `You are a witty, charming communication assistant. Generate 3 playful, flirty replies. Be confident and fun. 1-2 sentences.`,\n  'Funny': `You are a humorous communication assistant. Generate 3 funny, light-hearted replies. Be witty but not offensive.`\n};\n\nconst platformRules = {\n  'WhatsApp': 'Casual messaging style, emojis okay, 1-2 sentences',\n  'Instagram': 'Very casual, emojis encouraged, short and snappy',\n  'Outlook': 'Professional email style, no emojis, structured paragraphs',\n  'Slack': 'Professional-casual hybrid, bullet points okay',\n  'iMessage': 'Casual, natural conversational tone',\n  'LinkedIn': 'Professional, thought leadership tone'\n};\n\nconst systemPrompt = systemPrompts[tone] || systemPrompts['Friendly'];\nconst platformRule = platformRules[platform] || platformRules['WhatsApp'];\n\nconst finalPrompt = `${systemPrompt}\n\nPlatform: ${platform} - ${platformRule}\nLanguage: ${language}\n\nIMPORTANT RULES:\n- Read the ENTIRE chat conversation from the screenshot\n- Suggest a reply to the LAST message in the conversation\n- Do NOT quote the original message\n- Do NOT include any preamble like \"Here are some replies:\"\n- Output ONLY 3 numbered replies, nothing else\n- Each reply: max 2 sentences (unless email)\n- Be contextually appropriate and natural\n\nOUTPUT FORMAT:\n1. [First reply option]\n2. [Second reply option]\n3. [Third reply option]`;\n\nreturn [\n  {\n    json: {\n      imageData,\n      tone,\n      platform,\n      language,\n      systemPrompt: finalPrompt\n    }\n  }\n];"
+      },
+      "id": "process-input",
+      "name": "Process Input & Build Prompt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [450, 300]
+    },
+    {
+      "parameters": {
+        "model": "gpt-4o",
+        "messages": {
+          "values": [
+            {
+              "role": "system",
+              "content": "={{ $json.systemPrompt }}"
+            },
+            {
+              "role": "user",
+              "content": {
+                "values": [
+                  {
+                    "type": "text",
+                    "text": "Please analyze this chat screenshot and suggest 3 contextual replies to the last message."
+                  },
+                  {
+                    "type": "imageUrl",
+                    "imageUrl": "={{ $json.imageData }}"
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "options": {
+          "maxTokens": 250,
+          "temperature": 0.7
+        }
+      },
+      "id": "openai-vision",
+      "name": "OpenAI Vision - Generate Replies",
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 1.3,
+      "position": [650, 300],
+      "credentials": {
+        "openAiApi": {
+          "id": "openai-credentials",
+          "name": "OpenAI API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse OpenAI response and extract replies\nconst items = $input.all();\nconst response = items[0].json;\n\n// Extract the AI response content\nconst aiResponse = response.choices?.[0]?.message?.content || response.message?.content || response.output || '';\n\n// Parse numbered replies (1. 2. 3.)\nconst replyMatches = aiResponse.match(/\\d+\\.\\s*(.+?)(?=\\n\\d+\\.|$)/gs);\n\nlet replies = [];\nif (replyMatches && replyMatches.length > 0) {\n  replies = replyMatches.map(r => r.replace(/^\\d+\\.\\s*/, '').trim());\n} else {\n  // Fallback: split by newlines if numbered format fails\n  replies = aiResponse.split('\\n').filter(r => r.trim().length > 0).slice(0, 3);\n}\n\n// Ensure we have exactly 3 replies\nwhile (replies.length < 3) {\n  replies.push('Unable to generate reply. Please try again.');\n}\nreplies = replies.slice(0, 3);\n\nreturn [\n  {\n    json: {\n      success: true,\n      tone: items[0].json.tone,\n      platform: items[0].json.platform,\n      replies: replies,\n      reply1: replies[0],\n      reply2: replies[1],\n      reply3: replies[2],\n      rawResponse: aiResponse,\n      timestamp: new Date().toISOString()\n    }\n  }\n];"
+      },
+      "id": "parse-replies",
+      "name": "Parse & Format Replies",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [850, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "name": "Access-Control-Allow-Origin",
+                "value": "*"
+              }
+            ]
+          }
+        }
+      },
+      "id": "webhook-response",
+      "name": "Return Replies to User",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [1050, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Log error for debugging\nconst error = $input.first().json;\nconsole.error('AI Reply Assistant Error:', error);\n\nreturn [\n  {\n    json: {\n      success: false,\n      error: error.message || 'An error occurred while generating replies',\n      timestamp: new Date().toISOString()\n    }\n  }\n];"
+      },
+      "id": "error-handler",
+      "name": "Error Handler",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [650, 500]
+    }
+  ],
+  "connections": {
+    "Webhook - Receive Screenshot": {
+      "main": [
+        [
+          {
+            "node": "Process Input & Build Prompt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process Input & Build Prompt": {
+      "main": [
+        [
+          {
+            "node": "OpenAI Vision - Generate Replies",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Vision - Generate Replies": {
+      "main": [
+        [
+          {
+            "node": "Parse & Format Replies",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse & Format Replies": {
+      "main": [
+        [
+          {
+            "node": "Return Replies to User",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [],
+  "triggerCount": 1,
+  "updatedAt": "2025-10-03T00:00:00.000Z",
+  "versionId": "1"
+}
